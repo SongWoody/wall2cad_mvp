@@ -60,13 +60,17 @@ class SAMProcessor:
         
     def _load_model(self):
         """Load SAM model and initialize mask generator"""
-        print(f"Loading SAM model ({self.model_type}) on {self.device}...")
+        print(f"SAM 모델 로딩 시작 ({self.model_type}) on {self.device}...")
         
         # Load SAM model
+        print("모델 체크포인트 로딩 중...")
         self.sam_model = sam_model_registry[self.model_type](checkpoint=self.checkpoint_path)
+        
+        print(f"모델을 {self.device} 디바이스로 이동 중...")
         self.sam_model.to(device=self.device)
         
         # Initialize automatic mask generator with optimized parameters
+        print("자동 마스크 생성기 초기화 중...")
         self.mask_generator = SamAutomaticMaskGenerator(
             model=self.sam_model,
             points_per_side=32,  # Good balance of detail vs speed
@@ -79,7 +83,7 @@ class SAMProcessor:
             output_mode="binary_mask"
         )
         
-        print("SAM model loaded successfully")
+        print("SAM 모델 로딩 완료!")
         
     def generate_masks(self, image):
         """
