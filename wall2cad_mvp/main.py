@@ -7,7 +7,7 @@ import sys
 import os
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
-from ui_main import MainWindow
+from ui_main import MainWindow, LoadingSplash
 
 def main():
     # Create QApplication
@@ -19,8 +19,15 @@ def main():
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     
-    # Create and show main window
-    window = MainWindow()
+    # Show splash screen
+    splash = LoadingSplash()
+    splash.show()
+    
+    # Allow splash screen to render
+    app.processEvents()
+    
+    # Create and show main window with splash reference
+    window = MainWindow(splash)
     window.show()
     
     # Run application

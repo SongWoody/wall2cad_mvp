@@ -7,9 +7,9 @@ import sys
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QLabel, QStatusBar, QMenuBar, QMenu, 
                             QAction, QFileDialog, QMessageBox, QProgressBar,
-                            QFrame)
+                            QFrame, QSplashScreen)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QPixmap, QIcon
+from PyQt5.QtGui import QPixmap, QIcon, QFont
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -20,6 +20,35 @@ import cv2
 
 from sam_processor import SAMProcessor
 from dxf_converter import DXFConverter
+
+class SAMModelLoader(QThread):
+    """SAM model loading thread"""
+    progress = pyqtSignal(int)
+    status_update = pyqtSignal(str)
+    finished = pyqtSignal(object)  # SAMProcessor instance
+    error = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
+        
+    def run(self):
+        try:
+            self.progress.emit(10)
+            self.status_update.emit("모델 파일 확인 중...")
+            
+            self.progress.emit(30)
+            self.status_update.emit("SAM 모델 로딩 중... (2-3분 소요)")
+            
+            sam_processor = SAMProcessor()
+            
+            self.progress.emit(90)
+            self.status_update.emit("모델 초기화 완료")
+            
+            self.finished.emit(sam_processor)
+            self.progress.emit(100)
+            
+        except Exception as e:
+            self.error.emit(str(e))
 
 class SAMWorkerThread(QThread):
     """SAM processing worker thread to prevent UI blocking"""
@@ -101,13 +130,38 @@ class ImageCanvas(FigureCanvas):
         self.current_masks = masks
         self.draw()
 
-class MainWindow(QMainWindow):
+class LoadingSplash(QSplashScreen):
+    """Custom loading splash screen"""
+    
     def __init__(self):
+        # Create a simple splash screen image
+        pixmap = QPixmap(400, 300)
+        pixmap.fill(Qt.white)
+        
+        super().__init__(pixmap)
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+        
+        # Add text
+        self.showMessage(
+            "Wall2CAD MVP\n\nAI 모델 로딩 중...\n잠시만 기다려주세요.",
+            Qt.AlignCenter,
+            Qt.black
+        )
+        
+    def update_message(self, message, progress=0):
+        """Update splash screen message"""
+        full_message = f"Wall2CAD MVP\n\n{message}\n\n{progress}% 완료"
+        self.showMessage(full_message, Qt.AlignCenter, Qt.black)
+        self.repaint()  # Force immediate update
+
+class MainWindow(QMainWindow):
+    def __init__(self, splash=None):
         super().__init__()
         self.current_image_path = None
         self.current_result = None
         self.sam_processor = None
         self.dxf_converter = DXFConverter()
+        self.splash = splash
         
         self.init_ui()
         self.init_sam_processor()
@@ -193,26 +247,67 @@ class MainWindow(QMainWindow):
         
     def init_sam_processor(self):
         """Initialize SAM processor in background"""
-        self.status_bar.showMessage("Loading AI model...")
-        self.info_label.setText("Loading AI model... This may take a few minutes.")
+        self.status_bar.showMessage("AI 모델 로딩 중...")
+        self.info_label.setText("AI 모델을 로딩 중입니다... 2-3분 정도 소요됩니다.")
         
-        # Use QTimer to allow UI to update before loading
-        QTimer.singleShot(100, self._load_sam_model)
+        # Disable buttons during loading
+        self.load_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         
-    def _load_sam_model(self):
-        """Load SAM model"""
-        try:
-            self.sam_processor = SAMProcessor()
-            self.status_bar.showMessage("Ready")
-            self.info_label.setText("Ready - Load an image to start")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load AI model:\n{str(e)}")
-            self.info_label.setText("Error loading AI model - Please restart application")
+        # Show progress bar
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        
+        # Start model loading in background thread
+        self.model_loader = SAMModelLoader()
+        self.model_loader.progress.connect(self.on_model_loading_progress)
+        self.model_loader.status_update.connect(self.on_model_loading_status)
+        self.model_loader.finished.connect(self.on_model_loading_finished)
+        self.model_loader.error.connect(self.on_model_loading_error)
+        self.model_loader.start()
+        
+    def on_model_loading_progress(self, progress):
+        """Handle model loading progress"""
+        self.progress_bar.setValue(progress)
+        if self.splash:
+            self.splash.update_message("AI 모델 로딩 중...", progress)
+            
+    def on_model_loading_status(self, status):
+        """Handle model loading status update"""
+        self.info_label.setText(status)
+        self.status_bar.showMessage(status)
+        if self.splash:
+            self.splash.update_message(status, self.progress_bar.value())
+            
+    def on_model_loading_finished(self, sam_processor):
+        """Handle model loading completion"""
+        self.sam_processor = sam_processor
+        
+        # Update UI
+        self.progress_bar.setVisible(False)
+        self.load_btn.setEnabled(True)
+        self.info_label.setText("준비 완료 - 이미지를 로드하여 시작하세요")
+        self.status_bar.showMessage("준비 완료")
+        
+        # Close splash screen
+        if self.splash:
+            self.splash.finish(self)
+            
+    def on_model_loading_error(self, error_msg):
+        """Handle model loading error"""
+        self.progress_bar.setVisible(False)
+        QMessageBox.critical(self, "오류", f"AI 모델 로딩 실패:\n{error_msg}")
+        self.info_label.setText("AI 모델 로딩 오류 - 애플리케이션을 재시작해주세요")
+        self.status_bar.showMessage("오류")
+        
+        # Close splash screen
+        if self.splash:
+            self.splash.finish(self)
             
     def load_image(self):
         """Load and process image"""
         if not self.sam_processor:
-            QMessageBox.warning(self, "Warning", "AI model is still loading. Please wait.")
+            QMessageBox.warning(self, "경고", "AI 모델이 아직 로딩 중입니다. 잠시 기다려주세요.")
             return
             
         file_path, _ = QFileDialog.getOpenFileName(
@@ -233,8 +328,8 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.load_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
-        self.info_label.setText("Processing image... This may take several minutes.")
-        self.status_bar.showMessage("Processing...")
+        self.info_label.setText("이미지 처리 중... 몇 분 정도 소요됩니다.")
+        self.status_bar.showMessage("처리 중...")
         
         # Load and display image first
         try:
@@ -265,8 +360,8 @@ class MainWindow(QMainWindow):
         self.export_btn.setEnabled(True)
         
         mask_count = len(result['masks'])
-        self.info_label.setText(f"Processing complete - {mask_count} masks detected")
-        self.status_bar.showMessage(f"Ready - {mask_count} masks detected")
+        self.info_label.setText(f"처리 완료 - {mask_count}개 마스크 감지됨")
+        self.status_bar.showMessage(f"준비 완료 - {mask_count}개 마스크 감지됨")
         
     def on_processing_error(self, error_msg):
         """Handle SAM processing error"""
@@ -308,8 +403,8 @@ class MainWindow(QMainWindow):
     def show_error(self, message):
         """Show error message"""
         QMessageBox.critical(self, "Error", message)
-        self.info_label.setText("Error occurred - Check details in dialog")
-        self.status_bar.showMessage("Error")
+        self.info_label.setText("오류 발생 - 자세한 내용은 대화상자를 확인하세요")
+        self.status_bar.showMessage("오류")
         
     def show_about(self):
         """Show about dialog"""
