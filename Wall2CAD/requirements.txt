@@ -1,0 +1,59 @@
+# Wall2CAD - Requirements File
+# Core Dependencies
+
+# GUI Framework
+PyQt6>=6.4.0
+
+# Computer Vision & Image Processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+scipy>=1.11.0
+scikit-image>=0.21.0
+
+# Machine Learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# CAD File Processing
+ezdxf>=1.0.0
+
+# Math & Scientific Computing
+matplotlib>=3.7.0
+pandas>=2.0.0
+
+# Utilities
+tqdm>=4.65.0
+requests>=2.31.0
+
+# Optional Dependencies (for advanced features)
+# Uncomment if needed:
+
+# GPU Support (CUDA)
+# torch[cuda]>=2.0.0
+# torchvision[cuda]>=0.15.0
+
+# Additional Image Formats
+# imageio>=2.31.0
+# tifffile>=2023.7.0
+
+# Performance Optimization
+# numba>=0.57.0
+# Cython>=3.0.0
+
+# Web Features (for model download)
+# huggingface-hub>=0.16.0
+
+# Development & Testing
+# pytest>=7.4.0
+# pytest-qt>=4.2.0
+# black>=23.7.0
+# flake8>=6.0.0
+
+# Packaging & Distribution
+# PyInstaller>=5.13.0
+# cx_Freeze>=6.15.0
+
+# Documentation
+# sphinx>=7.1.0
+# sphinx-qt-documentation>=0.4.0
