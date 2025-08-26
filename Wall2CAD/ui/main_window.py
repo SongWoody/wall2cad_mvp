@@ -58,6 +58,9 @@ class MainWindow(QMainWindow):
         self.setup_toolbar()
         self.setup_statusbar()
         
+        # 툴바 연결
+        self.connect_toolbar()
+        
     def setup_menubar(self):
         """메뉴바 설정"""
         menubar = self.menuBar()
@@ -153,6 +156,15 @@ class MainWindow(QMainWindow):
         self.image_loader.image_loaded.connect(self.on_image_loaded)
         self.image_loader.load_error.connect(self.on_load_error)
         
+    def connect_toolbar(self):
+        """툴바 시그널 연결"""
+        self.main_toolbar.open_image.connect(self.open_image)
+        self.main_toolbar.save_dxf.connect(self.export_dxf)
+        self.main_toolbar.zoom_in.connect(self.zoom_in)
+        self.main_toolbar.zoom_out.connect(self.zoom_out)
+        self.main_toolbar.zoom_fit.connect(self.zoom_fit)
+        self.main_toolbar.toggle_grid.connect(self.toggle_grid)
+        
     def open_image(self):
         """이미지 파일 열기"""
         file_dialog = QFileDialog()
@@ -173,7 +185,8 @@ class MainWindow(QMainWindow):
     def on_image_loaded(self, image, filename):
         """이미지 로드 완료 시 호출"""
         self.statusbar.showMessage(f"이미지 로드 완료: {filename}")
-        # 뷰포트에 이미지 표시 (향후 구현)
+        # 뷰포트에 이미지 표시
+        self.viewport.load_image(image)
         print(f"Image loaded: {filename}, Shape: {image.shape}")
         
     def on_load_error(self, error_message):
@@ -185,3 +198,27 @@ class MainWindow(QMainWindow):
         """DXF 파일 내보내기"""
         # 향후 구현
         QMessageBox.information(self, "정보", "DXF 내보내기 기능은 아직 구현되지 않았습니다.")
+        
+    def zoom_in(self):
+        """확대"""
+        self.viewport.zoom_factor *= 1.2
+        self.viewport.update()
+        
+    def zoom_out(self):
+        """축소"""
+        self.viewport.zoom_factor /= 1.2
+        self.viewport.update()
+        
+    def zoom_fit(self):
+        """전체 보기"""
+        self.viewport.zoom_factor = 1.0
+        self.viewport.pan_x = 0
+        self.viewport.pan_y = 0
+        if self.viewport.image_pixmap:
+            self.viewport.fit_image_to_viewport()
+        self.viewport.update()
+        
+    def toggle_grid(self, show):
+        """그리드 토글"""
+        self.viewport.show_grid = show
+        self.viewport.update()
