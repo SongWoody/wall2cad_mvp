@@ -9,6 +9,9 @@ import torch
 import numpy as np
 from typing import List, Dict, Any, Optional
 
+# 모델 스캐너 import
+from utils.model_scanner import model_scanner
+
 try:
     # segment_anything을 상대 경로에서 import
     sam_path = os.path.join(os.path.dirname(__file__), '..', '..', 'wall2cad_mvp', 'segment_anything')
@@ -92,7 +95,15 @@ class SAMProcessor:
             
     def _find_checkpoint(self) -> str:
         """체크포인트 파일 자동 탐지"""
-        # 가능한 경로들
+        # 모델 스캐너를 사용하여 모델 찾기
+        model_scanner.scan_models()
+        models = model_scanner.get_models_by_type(self.model_type)
+        
+        if models:
+            # 첫 번째 모델 사용
+            return models[0]['path']
+            
+        # 모델 스캐너에서 찾지 못한 경우 기존 방식 사용
         possible_paths = [
             # 현재 디렉토리
             f"sam_{self.model_type}_4b8939.pth",
@@ -212,3 +223,19 @@ class SAMProcessor:
     def is_loaded(self) -> bool:
         """모델 로드 상태 확인"""
         return self.sam_model is not None
+        
+    @staticmethod
+    def get_available_models() -> Dict[str, List[Dict[str, str]]]:
+        """사용 가능한 SAM 모델 목록 반환"""
+        model_scanner.scan_models()
+        return model_scanner.discovered_models
+        
+    @staticmethod
+    def add_custom_model(file_path: str) -> bool:
+        """커스텀 모델 추가"""
+        return model_scanner.add_custom_model(file_path)
+        
+    @staticmethod
+    def validate_model_file(file_path: str) -> bool:
+        """모델 파일 유효성 검증"""
+        return model_scanner.validate_model_file(file_path)

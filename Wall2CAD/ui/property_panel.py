@@ -5,8 +5,9 @@ SAM 매개변수 조정 및 설정 UI
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGroupBox, QLabel, 
                             QSlider, QSpinBox, QDoubleSpinBox, QComboBox,
-                            QCheckBox, QPushButton, QHBoxLayout, QFormLayout)
+                            QCheckBox, QPushButton, QHBoxLayout, QFormLayout, QFileDialog)
 from PyQt6.QtCore import Qt, pyqtSignal
+from core.sam_processor import SAMProcessor
 
 class PropertyPanel(QWidget):
     """속성 패널 - SAM 매개변수 및 설정"""
@@ -47,11 +48,35 @@ class PropertyPanel(QWidget):
         group = QGroupBox("SAM 매개변수")
         layout = QFormLayout(group)
         
-        # 모델 선택
+        # 모델 선택 섹션
+        model_layout = QHBoxLayout()
+        
         self.model_combo = QComboBox()
-        self.model_combo.addItems(['vit_b', 'vit_l', 'vit_h'])
-        self.model_combo.setCurrentText('vit_h')
-        layout.addRow("모델:", self.model_combo)
+        self.model_combo.setMinimumWidth(200)
+        model_layout.addWidget(self.model_combo, 1)
+        
+        # 새로고침 버튼
+        self.refresh_models_btn = QPushButton("새로고침")
+        self.refresh_models_btn.setMaximumWidth(80)
+        self.refresh_models_btn.clicked.connect(self.refresh_model_list)
+        model_layout.addWidget(self.refresh_models_btn)
+        
+        # 수동 추가 버튼
+        self.add_model_btn = QPushButton("추가...")
+        self.add_model_btn.setMaximumWidth(60)
+        self.add_model_btn.clicked.connect(self.add_custom_model)
+        model_layout.addWidget(self.add_model_btn)
+        
+        layout.addRow("모델:", model_layout)
+        
+        # 선택된 모델 경로 표시 라벨
+        self.model_path_label = QLabel("경로: 모델을 선택하세요")
+        self.model_path_label.setWordWrap(True)
+        self.model_path_label.setStyleSheet("color: #666; font-size: 9pt; padding: 4px;")
+        layout.addRow("경로:", self.model_path_label)
+        
+        # 모델 목록 초기화
+        self.refresh_model_list()
         
         # Points per side
         self.points_per_side_spin = QSpinBox()
@@ -183,6 +208,7 @@ class PropertyPanel(QWidget):
         """시그널-슬롯 연결"""
         # SAM 매개변수 변경 시
         self.model_combo.currentTextChanged.connect(self.emit_sam_params)
+        self.model_combo.currentTextChanged.connect(self.update_model_path_label)
         self.points_per_side_spin.valueChanged.connect(self.emit_sam_params)
         self.iou_thresh_spin.valueChanged.connect(self.emit_sam_params)
         self.stability_thresh_spin.valueChanged.connect(self.emit_sam_params)
@@ -196,6 +222,7 @@ class PropertyPanel(QWidget):
     def emit_sam_params(self):
         """SAM 매개변수 시그널 발신"""
         params = {
+            'model_path': self.get_selected_model_path(),
             'model': self.model_combo.currentText(),
             'points_per_side': self.points_per_side_spin.value(),
             'pred_iou_thresh': self.iou_thresh_spin.value(),
@@ -216,6 +243,7 @@ class PropertyPanel(QWidget):
     def get_sam_params(self):
         """현재 SAM 매개변수 반환"""
         return {
+            'model_path': self.get_selected_model_path(),
             'model': self.model_combo.currentText(),
             'points_per_side': self.points_per_side_spin.value(),
             'pred_iou_thresh': self.iou_thresh_spin.value(),
@@ -234,3 +262,149 @@ class PropertyPanel(QWidget):
             'units': self.units_combo.currentText(),
             'scale_factor': self.scale_factor_spin.value()
         }
+        
+    def refresh_model_list(self):
+        """모델 목록 새로고침"""
+        try:
+            # 기존 항목 제거
+            self.model_combo.clear()
+            
+            # 사용 가능한 모델 스캔
+            available_models = SAMProcessor.get_available_models()
+            
+            # 콤보박스에 항목 추가
+            current_selection = None
+            for model_type in ['vit_h', 'vit_l', 'vit_b']:  # 큰 모델부터
+                models = available_models.get(model_type, [])
+                for model_info in models:
+                    # 경로를 짧게 표시 (파일명 + 상위 1-2 디렉토리만)
+                    short_path = self._get_short_path(model_info['path'])
+                    display_text = f"{model_info['name']}"
+                    
+                    self.model_combo.addItem(display_text, model_info['path'])
+                    
+                    # 툴팁으로 전체 경로 표시
+                    self.model_combo.setItemData(
+                        self.model_combo.count() - 1, 
+                        f"전체 경로: {model_info['path']}", 
+                        Qt.ItemDataRole.ToolTipRole
+                    )
+                    
+                    # 첫 번째 vit_h 모델을 기본 선택으로 설정
+                    if model_type == 'vit_h' and current_selection is None:
+                        current_selection = self.model_combo.count() - 1
+                        
+            # 모델이 하나도 없는 경우
+            if self.model_combo.count() == 0:
+                self.model_combo.addItem("모델이 없습니다 - '추가...' 버튼을 사용하세요", "")
+                self.model_combo.setEnabled(False)
+                self.process_button.setEnabled(False)
+            else:
+                self.model_combo.setEnabled(True)
+                self.process_button.setEnabled(True)
+                if current_selection is not None:
+                    self.model_combo.setCurrentIndex(current_selection)
+                    
+            # 콤보박스 크기 조정을 위한 스타일 설정
+            self.model_combo.setMaxVisibleItems(10)
+            self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+            
+            # 경로 라벨 업데이트
+            self.update_model_path_label()
+            
+            print(f"Found {self.model_combo.count()} SAM models")
+            
+        except Exception as e:
+            print(f"Error refreshing model list: {e}")
+            self.model_combo.clear()
+            self.model_combo.addItem("오류: 모델 스캔 실패", "")
+            self.model_combo.setEnabled(False)
+            
+    def add_custom_model(self):
+        """커스텀 모델 추가"""
+        try:
+            # 파일 다이얼로그 열기
+            file_dialog = QFileDialog(self)
+            file_dialog.setWindowTitle("SAM 모델 파일 선택")
+            file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+            file_dialog.setNameFilter("PyTorch 모델 파일 (*.pth);;모든 파일 (*)")
+            
+            if file_dialog.exec() == QFileDialog.DialogCode.Accepted:
+                file_paths = file_dialog.selectedFiles()
+                if file_paths:
+                    file_path = file_paths[0]
+                    
+                    # 모델 파일 검증
+                    if SAMProcessor.validate_model_file(file_path):
+                        # 모델 추가
+                        if SAMProcessor.add_custom_model(file_path):
+                            # 목록 새로고침
+                            self.refresh_model_list()
+                            
+                            # 방금 추가한 모델로 선택
+                            for i in range(self.model_combo.count()):
+                                if self.model_combo.itemData(i) == file_path:
+                                    self.model_combo.setCurrentIndex(i)
+                                    break
+                                    
+                            print(f"Custom model added: {file_path}")
+                        else:
+                            self.show_error("모델 추가에 실패했습니다.")
+                    else:
+                        self.show_error("유효하지 않은 SAM 모델 파일입니다.")
+                        
+        except Exception as e:
+            print(f"Error adding custom model: {e}")
+            self.show_error(f"모델 추가 중 오류가 발생했습니다: {e}")
+            
+    def show_error(self, message: str):
+        """오류 메시지 표시 (향후 QMessageBox로 개선 가능)"""
+        print(f"Error: {message}")
+        # TODO: QMessageBox로 개선
+        
+    def get_selected_model_path(self) -> str:
+        """선택된 모델의 파일 경로 반환"""
+        current_data = self.model_combo.currentData()
+        return current_data if current_data else ""
+        
+    def _get_short_path(self, full_path: str) -> str:
+        """경로를 짧게 표시하기 위한 헬퍼 함수"""
+        import os
+        try:
+            # 경로를 분리
+            path_parts = full_path.replace('\\', '/').split('/')
+            filename = path_parts[-1]
+            
+            if len(path_parts) <= 2:
+                return full_path
+                
+            # 파일명 + 상위 1-2 디렉토리만 표시
+            if len(path_parts) >= 3:
+                return f".../{path_parts[-2]}/{filename}"
+            else:
+                return f"{path_parts[-2]}/{filename}"
+                
+        except Exception:
+            return os.path.basename(full_path)
+            
+    def update_model_path_label(self):
+        """선택된 모델의 경로 라벨 업데이트"""
+        try:
+            selected_path = self.get_selected_model_path()
+            if selected_path and selected_path != "":
+                # 경로가 너무 길면 줄바꿈 처리
+                if len(selected_path) > 50:
+                    # 50자마다 줄바꿈
+                    formatted_path = ""
+                    for i in range(0, len(selected_path), 50):
+                        if i > 0:
+                            formatted_path += "\n"
+                        formatted_path += selected_path[i:i+50]
+                    self.model_path_label.setText(formatted_path)
+                else:
+                    self.model_path_label.setText(selected_path)
+            else:
+                self.model_path_label.setText("모델을 선택하세요")
+        except Exception as e:
+            print(f"Error updating model path label: {e}")
+            self.model_path_label.setText("경로 표시 오류")
