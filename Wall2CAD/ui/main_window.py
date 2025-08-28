@@ -12,7 +12,9 @@ from PyQt6.QtGui import QAction, QIcon
 from ui.viewport import Viewport
 from ui.property_panel import PropertyPanel
 from ui.toolbar import MainToolBar
+from ui.progress_dialog import ModelLoadingDialog
 from core.image_loader import ImageLoader
+from core.sam_worker import SAMWorkerThread
 
 class MainWindow(QMainWindow):
     """메인 애플리케이션 윈도우"""
@@ -22,6 +24,15 @@ class MainWindow(QMainWindow):
         
         # 이미지 로더 초기화
         self.image_loader = ImageLoader()
+        
+        # SAM 워커 스레드 초기화
+        self.sam_worker = SAMWorkerThread()
+        
+        # 진행률 다이얼로그
+        self.progress_dialog = None
+        
+        # 현재 로드된 모델 정보
+        self.current_model_info = {"loaded": False, "path": "", "type": ""}
         
         self.init_ui()
         self.setup_connections()
@@ -156,6 +167,15 @@ class MainWindow(QMainWindow):
         self.image_loader.image_loaded.connect(self.on_image_loaded)
         self.image_loader.load_error.connect(self.on_load_error)
         
+        # SAM 워커 시그널
+        self.sam_worker.model_load_started.connect(self.on_model_load_started)
+        self.sam_worker.model_load_progress.connect(self.on_model_load_progress)
+        self.sam_worker.model_load_finished.connect(self.on_model_load_finished)
+        self.sam_worker.error_occurred.connect(self.on_sam_error)
+        
+        # 속성 패널 시그널
+        self.property_panel.sam_params_changed.connect(self.on_sam_params_changed)
+        
     def connect_toolbar(self):
         """툴바 시그널 연결"""
         self.main_toolbar.open_image.connect(self.open_image)
@@ -222,3 +242,97 @@ class MainWindow(QMainWindow):
         """그리드 토글"""
         self.viewport.show_grid = show
         self.viewport.update()
+        
+    # SAM 관련 이벤트 핸들러
+    def on_sam_params_changed(self, params):
+        """SAM 매개변수 변경 시 호출"""
+        model_path = params.get('model_path', '')
+        
+        # 새로운 모델이 선택된 경우 자동 로딩
+        if model_path and model_path != self.current_model_info.get('path', ''):
+            self.load_sam_model(model_path)
+            
+    def load_sam_model(self, model_path: str):
+        """SAM 모델 로딩 시작"""
+        if not model_path:
+            return
+            
+        # 모델 타입 추출
+        import os
+        filename = os.path.basename(model_path).lower()
+        if 'vit_b' in filename:
+            model_type = 'vit_b'
+        elif 'vit_l' in filename:
+            model_type = 'vit_l' 
+        elif 'vit_h' in filename:
+            model_type = 'vit_h'
+        else:
+            model_type = 'vit_h'  # 기본값
+            
+        print(f"Loading SAM model: {model_path} (type: {model_type})")
+        
+        # 워커 스레드에서 모델 로딩 시작
+        self.sam_worker.load_sam_model(model_path, model_type)
+        
+    def on_model_load_started(self):
+        """모델 로딩 시작 시 호출"""
+        # 실제 로딩 중인 모델 정보 가져오기
+        model_path = self.sam_worker.model_path
+        model_type = self.sam_worker.model_type
+        
+        # 파일명으로부터 간단한 모델명 생성
+        import os
+        filename = os.path.basename(model_path)
+        model_name = f"SAM {model_type.upper()} ({filename})"
+        
+        self.progress_dialog = ModelLoadingDialog(model_name, self)
+        
+        # 취소 버튼 연결
+        self.progress_dialog.cancel_requested.connect(self.sam_worker.stop_processing)
+        
+        self.progress_dialog.show()
+        self.statusbar.showMessage("SAM 모델 로딩 중...")
+        
+    def on_model_load_progress(self, progress: int, message: str):
+        """모델 로딩 진행률 업데이트"""
+        if self.progress_dialog:
+            self.progress_dialog.update_progress(progress, message)
+            
+    def on_model_load_finished(self, success: bool, message: str):
+        """모델 로딩 완료 시 호출"""
+        if self.progress_dialog:
+            self.progress_dialog.set_completed(success, message)
+            
+        if success:
+            # 모델 정보 업데이트
+            self.current_model_info = self.sam_worker.get_model_info()
+            self.statusbar.showMessage(f"모델 로딩 완료: {message}")
+            
+            # 세그멘테이션 버튼 활성화
+            self.property_panel.process_button.setEnabled(True)
+            self.property_panel.process_button.setText("세그멘테이션 실행")
+            
+            print(f"Model loaded successfully: {self.current_model_info}")
+        else:
+            self.statusbar.showMessage("모델 로딩 실패")
+            self.property_panel.process_button.setEnabled(False)
+            
+            # 오류 메시지 박스 표시
+            QMessageBox.warning(self, "모델 로딩 실패", message)
+            
+    def on_sam_error(self, error_message: str):
+        """SAM 오류 처리"""
+        if self.progress_dialog:
+            self.progress_dialog.set_error(error_message)
+            
+        self.statusbar.showMessage("오류 발생")
+        print(f"SAM Error: {error_message}")
+        
+    def get_model_status(self) -> str:
+        """현재 모델 상태 반환"""
+        if self.current_model_info.get('loaded', False):
+            model_type = self.current_model_info.get('model_type', 'unknown')
+            device = self.current_model_info.get('device_info', {}).get('device', 'unknown')
+            return f"모델: {model_type.upper()} ({device})"
+        else:
+            return "모델: 미로드"

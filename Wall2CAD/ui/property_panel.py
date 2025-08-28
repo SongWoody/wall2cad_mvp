@@ -178,7 +178,8 @@ class PropertyPanel(QWidget):
         layout = QVBoxLayout()
         
         # SAM 처리 버튼
-        self.process_button = QPushButton("세그멘테이션 실행")
+        self.process_button = QPushButton("모델 로딩 필요")
+        self.process_button.setEnabled(False)
         self.process_button.setStyleSheet("""
             QPushButton {
                 background-color: #007acc;
@@ -299,9 +300,12 @@ class PropertyPanel(QWidget):
                 self.model_combo.addItem("모델이 없습니다 - '추가...' 버튼을 사용하세요", "")
                 self.model_combo.setEnabled(False)
                 self.process_button.setEnabled(False)
+                self.process_button.setText("모델 없음")
             else:
                 self.model_combo.setEnabled(True)
-                self.process_button.setEnabled(True)
+                # 처리 버튼은 모델 로딩 후에 활성화
+                self.process_button.setEnabled(False)
+                self.process_button.setText("모델 로딩 필요")
                 if current_selection is not None:
                     self.model_combo.setCurrentIndex(current_selection)
                     
@@ -358,9 +362,10 @@ class PropertyPanel(QWidget):
             self.show_error(f"모델 추가 중 오류가 발생했습니다: {e}")
             
     def show_error(self, message: str):
-        """오류 메시지 표시 (향후 QMessageBox로 개선 가능)"""
+        """오류 메시지 표시"""
         print(f"Error: {message}")
-        # TODO: QMessageBox로 개선
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, "오류", message)
         
     def get_selected_model_path(self) -> str:
         """선택된 모델의 파일 경로 반환"""
