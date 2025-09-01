@@ -4,9 +4,11 @@ PyOpenGL 기반 2D 벡터 렌더링
 """
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QPixmap, QImage
+from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QPixmap, QImage, QPainterPath, QPolygonF
 import numpy as np
+import cv2
+from typing import List, Dict, Any
 
 class Viewport(QWidget):
     """CAD 스타일 2D 뷰포트"""
@@ -51,6 +53,12 @@ class Viewport(QWidget):
         self.vectors = []
         self.masks = []
         
+        # 마스크 시각화 옵션
+        self.show_masks = True
+        self.show_mask_outlines = True
+        self.show_mask_fills = True
+        self.mask_colors = self._generate_mask_colors(50)  # 50개 색상 미리 생성
+        
         # 그리드 표시 여부
         self.show_grid = True
         
@@ -71,6 +79,10 @@ class Viewport(QWidget):
         # 이미지 그리기
         if self.image_pixmap and self.image_rect:
             self.draw_image(painter)
+            
+        # 마스크 그리기
+        if self.show_masks and self.masks:
+            self.draw_masks(painter)
             
     def draw_grid(self, painter):
         """그리드 그리기"""
@@ -193,10 +205,133 @@ class Viewport(QWidget):
             
             painter.drawPixmap(scaled_x, scaled_y, scaled_pixmap)
         
-    def display_masks(self, masks):
+    def display_masks(self, masks: List[Dict[str, Any]]):
         """마스크 표시"""
-        # 향후 구현
-        pass
+        self.masks = masks
+        print(f"마스크 {len(masks)}개 로드됨")
+        self.update()  # 화면 업데이트
+        
+    def draw_masks(self, painter: QPainter):
+        """마스크 그리기"""
+        if not self.masks or not self.image_rect:
+            return
+            
+        x, y, width, height = self.image_rect
+        
+        # 줄 및 패닝 적용
+        scaled_width = int(width * self.zoom_factor)
+        scaled_height = int(height * self.zoom_factor)
+        scaled_x = int(x * self.zoom_factor + self.pan_x)
+        scaled_y = int(y * self.zoom_factor + self.pan_y)
+        
+        # 이미지 크기 비율 계산
+        if self.image is not None:
+            img_h, img_w = self.image.shape[:2]
+            scale_x = scaled_width / img_w
+            scale_y = scaled_height / img_h
+            
+            # 각 마스크 그리기
+            for i, mask_data in enumerate(self.masks):
+                if i >= len(self.mask_colors):
+                    break
+                    
+                mask = mask_data['segmentation']
+                color = self.mask_colors[i]
+                
+                # 마스크 윤곽선 추출
+                contours = self._extract_contours(mask)
+                
+                for contour in contours:
+                    if len(contour) < 3:
+                        continue
+                        
+                    # 좌표 변환 및 스케일링
+                    scaled_contour = []
+                    for point in contour:
+                        px = scaled_x + point[0] * scale_x
+                        py = scaled_y + point[1] * scale_y
+                        scaled_contour.append((px, py))
+                    
+                    # QPolygonF 생성
+                    polygon = QPolygonF()
+                    for px, py in scaled_contour:
+                        polygon.append(QPointF(px, py))
+                    
+                    # 마스크 채우기
+                    if self.show_mask_fills:
+                        fill_color = QColor(color[0], color[1], color[2], 60)  # 투명도 60
+                        brush = QBrush(fill_color)
+                        painter.setBrush(brush)
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawPolygon(polygon)
+                    
+                    # 마스크 윤곽선
+                    if self.show_mask_outlines:
+                        outline_color = QColor(color[0], color[1], color[2], 180)
+                        pen = QPen(outline_color, 2)
+                        painter.setPen(pen)
+                        painter.setBrush(Qt.BrushStyle.NoBrush)
+                        painter.drawPolygon(polygon)
+                        
+    def _extract_contours(self, mask: np.ndarray):
+        """마스크에서 윤곽선 추출"""
+        try:
+            # 마스크를 uint8로 변환
+            mask_uint8 = (mask.astype(np.uint8)) * 255
+            
+            # OpenCV로 윤곽선 추출
+            contours, _ = cv2.findContours(
+                mask_uint8, 
+                cv2.RETR_EXTERNAL, 
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            # 결과 변환
+            result_contours = []
+            for contour in contours:
+                if len(contour) >= 3:
+                    # 커브 단순화
+                    epsilon = 0.005 * cv2.arcLength(contour, True)
+                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                    
+                    # 좌표 변환 (n, 1, 2) -> (n, 2)
+                    simplified = approx.reshape(-1, 2)
+                    result_contours.append(simplified)
+                    
+            return result_contours
+            
+        except Exception as e:
+            print(f"윤곽선 추출 오류: {e}")
+            return []
+            
+    def _generate_mask_colors(self, count: int):
+        """마스크용 색상 생성"""
+        colors = []
+        
+        # HSV 색상 환에서 색상 생성
+        for i in range(count):
+            hue = (i * 360 / count) % 360
+            saturation = 0.7 + (i % 3) * 0.1  # 0.7, 0.8, 0.9 순환
+            value = 0.8 + (i % 2) * 0.1       # 0.8, 0.9 순환
+            
+            # HSV를 RGB로 변환
+            import colorsys
+            r, g, b = colorsys.hsv_to_rgb(hue/360, saturation, value)
+            colors.append((int(r*255), int(g*255), int(b*255)))
+            
+        return colors
+        
+    def set_mask_visibility(self, show_masks: bool, show_outlines: bool = True, show_fills: bool = True):
+        """마스크 표시 옵션 설정"""
+        self.show_masks = show_masks
+        self.show_mask_outlines = show_outlines
+        self.show_mask_fills = show_fills
+        self.update()
+        
+    def clear_masks(self):
+        """마스크 지우기"""
+        self.masks = []
+        self.update()
         
     def display_vectors(self, vectors):
         """벡터 표시"""

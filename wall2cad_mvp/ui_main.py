@@ -7,7 +7,8 @@ import sys
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QLabel, QStatusBar, QMenuBar, QMenu, 
                             QAction, QFileDialog, QMessageBox, QProgressBar,
-                            QFrame, QSplashScreen)
+                            QFrame, QSplashScreen, QTextEdit, QSplitter,
+                            QGroupBox, QCheckBox, QSpinBox, QSlider)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QPixmap, QIcon, QFont
 
@@ -108,24 +109,51 @@ class ImageCanvas(FigureCanvas):
         self.draw()
         
     def display_result(self, image, masks):
-        """Display image with mask overlays"""
+        """Display image with mask overlays with improved visualization"""
         self.ax.clear()
         self.ax.imshow(image)
         
-        # Draw mask contours
-        for mask_data in masks:
+        # Generate distinct colors for each mask
+        colors = plt.cm.tab20(np.linspace(0, 1, min(len(masks), 20)))
+        if len(masks) > 20:
+            # Use rainbow colors for more masks
+            colors = plt.cm.rainbow(np.linspace(0, 1, len(masks)))
+        
+        # Draw mask overlays and contours
+        for i, mask_data in enumerate(masks):
             mask = mask_data['segmentation']
-            mask_uint8 = (mask.astype(np.uint8)) * 255
+            area = mask_data.get('area', 0)
+            stability_score = mask_data.get('stability_score', 0)
             
+            # Color intensity based on mask quality
+            alpha = max(0.3, min(0.8, stability_score))
+            color = colors[i % len(colors)]
+            
+            # Create colored mask overlay
+            colored_mask = np.zeros((*mask.shape, 4))
+            colored_mask[mask] = [color[0], color[1], color[2], alpha * 0.4]
+            self.ax.imshow(colored_mask)
+            
+            # Draw contours
+            mask_uint8 = (mask.astype(np.uint8)) * 255
             contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             for cnt in contours:
                 cnt = cnt.squeeze()
                 if len(cnt.shape) == 2 and cnt.shape[0] >= 3:
-                    self.ax.plot(cnt[:, 0], cnt[:, 1], linewidth=1.5, color='red', alpha=0.8)
+                    # Line width based on mask size
+                    linewidth = max(0.8, min(2.5, area / 10000))
+                    self.ax.plot(cnt[:, 0], cnt[:, 1], 
+                               linewidth=linewidth, color=color[:3], alpha=0.9)
         
         self.ax.axis('off')
-        self.ax.set_title(f'Result: {len(masks)} masks detected', fontsize=12, pad=10)
+        
+        # Enhanced title with statistics
+        total_area = sum(mask['area'] for mask in masks)
+        avg_score = sum(mask.get('stability_score', 0) for mask in masks) / len(masks) if masks else 0
+        title = f'Result: {len(masks)} masks detected\nTotal area: {total_area:,} pixels, Avg quality: {avg_score:.2f}'
+        self.ax.set_title(title, fontsize=11, pad=10)
+        
         self.current_image = image
         self.current_masks = masks
         self.draw()
@@ -185,12 +213,19 @@ class MainWindow(QMainWindow):
         self.load_btn.setMinimumHeight(40)
         self.load_btn.clicked.connect(self.load_image)
         
+        self.segment_btn = QPushButton("세그멘테이션 실행")
+        self.segment_btn.setMinimumHeight(40)
+        self.segment_btn.setEnabled(False)
+        self.segment_btn.clicked.connect(self.run_segmentation)
+        self.segment_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
+        
         self.export_btn = QPushButton("Export DXF")
         self.export_btn.setMinimumHeight(40)
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self.export_dxf)
         
         button_layout.addWidget(self.load_btn)
+        button_layout.addWidget(self.segment_btn)
         button_layout.addStretch()
         button_layout.addWidget(self.export_btn)
         
@@ -201,15 +236,27 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         
-        # Info label
+        # Info panel
+        info_group = QGroupBox("마스크 정보")
+        info_layout = QVBoxLayout(info_group)
+        
         self.info_label = QLabel("Ready - Load an image to start")
         self.info_label.setStyleSheet("padding: 5px; background-color: #f0f0f0;")
+        
+        # Detailed info text area
+        self.detail_info = QTextEdit()
+        self.detail_info.setMaximumHeight(100)
+        self.detail_info.setReadOnly(True)
+        self.detail_info.setVisible(False)
+        
+        info_layout.addWidget(self.info_label)
+        info_layout.addWidget(self.detail_info)
         
         # Add to layout
         main_layout.addLayout(button_layout)
         main_layout.addWidget(self.canvas, 1)
         main_layout.addWidget(self.progress_bar)
-        main_layout.addWidget(self.info_label)
+        main_layout.addWidget(info_group)
         
         # Status bar
         self.status_bar = QStatusBar()
@@ -252,6 +299,7 @@ class MainWindow(QMainWindow):
         
         # Disable buttons during loading
         self.load_btn.setEnabled(False)
+        self.segment_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
         
         # Show progress bar
@@ -287,7 +335,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.load_btn.setEnabled(True)
         self.info_label.setText("준비 완료 - 이미지를 로드하여 시작하세요")
-        self.status_bar.showMessage("준비 완료")
+        self.status_bar.showMessage("준비 완룼")
         
         # Close splash screen
         if self.splash:
@@ -305,7 +353,7 @@ class MainWindow(QMainWindow):
             self.splash.finish(self)
             
     def load_image(self):
-        """Load and process image"""
+        """Load image only (without processing)"""
         if not self.sam_processor:
             QMessageBox.warning(self, "경고", "AI 모델이 아직 로딩 중입니다. 잠시 기다려주세요.")
             return
@@ -318,8 +366,49 @@ class MainWindow(QMainWindow):
         )
         
         if file_path:
-            self.current_image_path = file_path
-            self.process_image(file_path)
+            try:
+                # Load and display image
+                image = cv2.imread(file_path)
+                if image is None:
+                    raise Exception("이미지를 로드할 수 없습니다")
+                    
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                self.canvas.display_image_only(image)
+                
+                # Update state
+                self.current_image_path = file_path
+                self.current_result = None
+                
+                # Enable segmentation button
+                self.segment_btn.setEnabled(True)
+                self.export_btn.setEnabled(False)
+                
+                # Update info
+                filename = os.path.basename(file_path)
+                image_shape = image.shape
+                self.info_label.setText(
+                    f"이미지 로드 완료: {filename} ({image_shape[1]}x{image_shape[0]}px) - "
+                    f"세그멘테이션 실행 버튼을 눌러주세요"
+                )
+                self.status_bar.showMessage(f"이미지 로드 완료: {filename}")
+                
+                # Hide detailed info
+                self.detail_info.setVisible(False)
+                
+            except Exception as e:
+                self.show_error(f"이미지 로드 실패: {str(e)}")
+                
+    def run_segmentation(self):
+        """Run segmentation on loaded image"""
+        if not self.current_image_path:
+            QMessageBox.warning(self, "경고", "먼저 이미지를 로드해주세요.")
+            return
+            
+        if not self.sam_processor:
+            QMessageBox.warning(self, "경고", "AI 모델이 아직 로딩 중입니다.")
+            return
+            
+        self.process_image(self.current_image_path)
             
     def process_image(self, image_path):
         """Process image with SAM"""
@@ -327,9 +416,10 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.load_btn.setEnabled(False)
+        self.segment_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
-        self.info_label.setText("이미지 처리 중... 몇 분 정도 소요됩니다.")
-        self.status_bar.showMessage("처리 중...")
+        self.info_label.setText("세그멘테이션 처리 중... 몇 분 정도 소요됩니다.")
+        self.status_bar.showMessage("세그멘테이션 처리 중...")
         
         # Load and display image first
         try:
@@ -354,20 +444,50 @@ class MainWindow(QMainWindow):
         # Display result
         self.canvas.display_result(result['image'], result['masks'])
         
+        # Update detailed information
+        self.update_detailed_info(result['masks'])
+        
         # Update UI
         self.progress_bar.setVisible(False)
         self.load_btn.setEnabled(True)
+        self.segment_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
         
-        mask_count = len(result['masks'])
-        self.info_label.setText(f"처리 완료 - {mask_count}개 마스크 감지됨")
-        self.status_bar.showMessage(f"준비 완료 - {mask_count}개 마스크 감지됨")
+        masks = result['masks']
+        mask_count = len(masks)
+        
+        # Calculate statistics
+        if masks:
+            total_area = sum(mask['area'] for mask in masks)
+            avg_score = sum(mask.get('stability_score', 0) for mask in masks) / len(masks)
+            
+            # Quality distribution
+            quality_counts = {}
+            for mask in masks:
+                category = mask.get('quality_category', 'unknown')
+                quality_counts[category] = quality_counts.get(category, 0) + 1
+                
+            # Create detailed status message
+            quality_summary = ', '.join([f"{count} {quality}" for quality, count in quality_counts.items()])
+            
+            self.info_label.setText(
+                f"처리 완료 - {mask_count}개 마스크 감지됨 | "
+                f"총 면적: {total_area:,}px | "
+                f"평균 품질: {avg_score:.3f} | "
+                f"품질 분포: {quality_summary}"
+            )
+            
+            self.status_bar.showMessage(f"준비 완료 - {mask_count}개 마스크 (평균 품질: {avg_score:.3f})")
+        else:
+            self.info_label.setText("처리 완료 - 마스크를 감지하지 못했습니다")
+            self.status_bar.showMessage("준비 완료 - 마스크 없음")
         
     def on_processing_error(self, error_msg):
         """Handle SAM processing error"""
-        self.show_error(f"Processing failed: {error_msg}")
+        self.show_error(f"세그멘테이션 실패: {error_msg}")
         self.progress_bar.setVisible(False)
         self.load_btn.setEnabled(True)
+        self.segment_btn.setEnabled(True)
         
     def export_dxf(self):
         """Export current result to DXF"""
@@ -405,6 +525,45 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", message)
         self.info_label.setText("오류 발생 - 자세한 내용은 대화상자를 확인하세요")
         self.status_bar.showMessage("오류")
+        
+    def update_detailed_info(self, masks):
+        """Update detailed mask information display"""
+        if not masks:
+            self.detail_info.setText("마스크 정보가 없습니다.")
+            return
+            
+        # Show detailed info panel
+        self.detail_info.setVisible(True)
+        
+        # Generate detailed statistics
+        info_lines = []
+        info_lines.append(f"=== 마스크 상세 정보 ===")
+        info_lines.append(f"총 마스크 수: {len(masks)}")
+        info_lines.append("")
+        
+        # Top 10 masks by area
+        info_lines.append("주요 마스크 (Top 10):")
+        for i, mask in enumerate(masks[:10]):
+            area = mask['area']
+            stability = mask.get('stability_score', 0)
+            category = mask.get('quality_category', 'unknown')
+            info_lines.append(
+                f"{i+1:2d}. 면적: {area:6,}px | 품질: {stability:.3f} | 등급: {category}"
+            )
+            
+        # Quality distribution
+        quality_dist = {}
+        for mask in masks:
+            category = mask.get('quality_category', 'unknown')
+            quality_dist[category] = quality_dist.get(category, 0) + 1
+            
+        info_lines.append("")
+        info_lines.append("품질 분포:")
+        for quality, count in sorted(quality_dist.items()):
+            percentage = (count / len(masks)) * 100
+            info_lines.append(f"  {quality}: {count}개 ({percentage:.1f}%)")
+            
+        self.detail_info.setText("\n".join(info_lines))
         
     def show_about(self):
         """Show about dialog"""

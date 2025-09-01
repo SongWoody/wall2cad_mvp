@@ -171,6 +171,9 @@ class MainWindow(QMainWindow):
         self.sam_worker.model_load_started.connect(self.on_model_load_started)
         self.sam_worker.model_load_progress.connect(self.on_model_load_progress)
         self.sam_worker.model_load_finished.connect(self.on_model_load_finished)
+        self.sam_worker.segmentation_started.connect(self.on_segmentation_started)
+        self.sam_worker.segmentation_progress.connect(self.on_segmentation_progress)
+        self.sam_worker.segmentation_finished.connect(self.on_segmentation_finished)
         self.sam_worker.error_occurred.connect(self.on_sam_error)
         
         # 속성 패널 시그널
@@ -179,11 +182,13 @@ class MainWindow(QMainWindow):
     def connect_toolbar(self):
         """툴바 시그널 연결"""
         self.main_toolbar.open_image.connect(self.open_image)
+        self.main_toolbar.run_segmentation.connect(self.run_segmentation)
         self.main_toolbar.save_dxf.connect(self.export_dxf)
         self.main_toolbar.zoom_in.connect(self.zoom_in)
         self.main_toolbar.zoom_out.connect(self.zoom_out)
         self.main_toolbar.zoom_fit.connect(self.zoom_fit)
         self.main_toolbar.toggle_grid.connect(self.toggle_grid)
+        self.main_toolbar.toggle_masks.connect(self.toggle_masks)
         
     def open_image(self):
         """이미지 파일 열기"""
@@ -207,6 +212,12 @@ class MainWindow(QMainWindow):
         self.statusbar.showMessage(f"이미지 로드 완료: {filename}")
         # 뷰포트에 이미지 표시
         self.viewport.load_image(image)
+        # 마스크 지우기 (새 이미지 로드 시)
+        self.viewport.clear_masks()
+        
+        # 툴바 상태 업데이트
+        self.update_toolbar_state()
+        
         print(f"Image loaded: {filename}, Shape: {image.shape}")
         
     def on_load_error(self, error_message):
@@ -242,6 +253,43 @@ class MainWindow(QMainWindow):
         """그리드 토글"""
         self.viewport.show_grid = show
         self.viewport.update()
+        
+    def toggle_masks(self, show):
+        """마스크 토글"""
+        self.viewport.set_mask_visibility(show)
+        
+    def run_segmentation(self):
+        """세그멘테이션 실행"""
+        print("Starting segmentation...")
+        current_image = self.image_loader.get_current_image()
+        if current_image is None:
+            QMessageBox.warning(self, "경고", "먼저 이미지를 로드해주세요.")
+            return
+            
+        if not self.sam_worker.is_model_loaded():
+            QMessageBox.warning(self, "경고", "SAM 모델이 로드되지 않았습니다.")
+            return
+            
+        # 세그멘테이션 매개변수 가져오기
+        sam_params = self.property_panel.get_sam_parameters()
+        
+        # 세그멘테이션 시작
+        self.sam_worker.run_segmentation(
+            current_image,
+            sam_params
+        )
+        
+    def update_toolbar_state(self):
+        """툴바 상태 업데이트"""
+        has_image = self.image_loader.is_loaded()
+        has_masks = len(self.viewport.masks) > 0
+        model_loaded = self.sam_worker.is_model_loaded()
+        
+        self.main_toolbar.set_enabled_state(
+            has_image=has_image,
+            has_masks=has_masks, 
+            model_loaded=model_loaded
+        )
         
     # SAM 관련 이벤트 핸들러
     def on_sam_params_changed(self, params):
@@ -285,10 +333,11 @@ class MainWindow(QMainWindow):
         filename = os.path.basename(model_path)
         model_name = f"SAM {model_type.upper()} ({filename})"
         
-        self.progress_dialog = ModelLoadingDialog(model_name, self)
+        self.progress_dialog = ModelLoadingDialog(self)
         
-        # 취소 버튼 연결
-        self.progress_dialog.cancel_requested.connect(self.sam_worker.stop_processing)
+        # 취소 버튼 연결 (시그널이 있는 경우)
+        if hasattr(self.progress_dialog, 'cancel_requested'):
+            self.progress_dialog.cancel_requested.connect(self.sam_worker.stop_processing)
         
         self.progress_dialog.show()
         self.statusbar.showMessage("SAM 모델 로딩 중...")
@@ -328,6 +377,31 @@ class MainWindow(QMainWindow):
         self.statusbar.showMessage("오류 발생")
         print(f"SAM Error: {error_message}")
         
+    def on_segmentation_started(self):
+        """세그멘테이션 시작"""
+        self.statusbar.showMessage("세그멘테이션 실행 중...")
+        self.main_toolbar.set_segmentation_running(True)
+        
+    def on_segmentation_progress(self, progress, message):
+        """세그멘테이션 진행률"""
+        self.statusbar.showMessage(f"{message} ({progress}%)")
+        
+    def on_segmentation_finished(self, success, masks, message):
+        """세그멘테이션 완료"""
+        self.main_toolbar.set_segmentation_running(False)
+        
+        if success and masks:
+            # 마스크 표시
+            self.viewport.display_masks(masks)
+            self.statusbar.showMessage(f"세그멘테이션 완료 - {len(masks)}개 마스크 생성됨")
+            QMessageBox.information(self, "성공", f"{len(masks)}개의 마스크가 생성되었습니다.")
+        else:
+            self.statusbar.showMessage("세그멘테이션 실패")
+            QMessageBox.warning(self, "실패", f"세그멘테이션 실패:\n{message}")
+            
+        # 툴바 상태 업데이트
+        self.update_toolbar_state()
+    
     def get_model_status(self) -> str:
         """현재 모델 상태 반환"""
         if self.current_model_info.get('loaded', False):

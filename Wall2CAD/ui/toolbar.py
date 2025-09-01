@@ -12,11 +12,13 @@ class MainToolBar(QToolBar):
     
     # 시그널 정의
     open_image = pyqtSignal()
+    run_segmentation = pyqtSignal()
     save_dxf = pyqtSignal()
     zoom_in = pyqtSignal()
     zoom_out = pyqtSignal()
     zoom_fit = pyqtSignal()
     toggle_grid = pyqtSignal(bool)
+    toggle_masks = pyqtSignal(bool)
     
     def __init__(self):
         super().__init__()
@@ -36,11 +38,19 @@ class MainToolBar(QToolBar):
         open_action.triggered.connect(self.open_image.emit)
         self.addAction(open_action)
         
+        # 세그멘테이션 실행
+        self.segment_action = QAction("세그멘테이션 실행", self)
+        self.segment_action.setStatusTip("SAM 모델로 이미지 세그멘테이션을 수행합니다")
+        self.segment_action.setEnabled(False)  # 기본적으로 비활성화
+        self.segment_action.triggered.connect(self.run_segmentation.emit)
+        self.addAction(self.segment_action)
+        
         # DXF 저장
-        save_action = QAction("저장", self)
-        save_action.setStatusTip("DXF 파일로 저장합니다")
-        save_action.triggered.connect(self.save_dxf.emit)
-        self.addAction(save_action)
+        self.save_action = QAction("DXF 저장", self)
+        self.save_action.setStatusTip("DXF 파일로 저장합니다")
+        self.save_action.setEnabled(False)  # 기본적으로 비활성화
+        self.save_action.triggered.connect(self.save_dxf.emit)
+        self.addAction(self.save_action)
         
         self.addSeparator()
         
@@ -78,13 +88,37 @@ class MainToolBar(QToolBar):
         self.grid_action.toggled.connect(self.toggle_grid.emit)
         self.addAction(self.grid_action)
         
+        # 마스크 토글
+        self.mask_action = QAction("마스크", self)
+        self.mask_action.setCheckable(True)
+        self.mask_action.setChecked(True)
+        self.mask_action.setStatusTip("마스크 표시를 토글합니다")
+        self.mask_action.setEnabled(False)  # 마스크가 없을 때는 비활성화
+        self.mask_action.toggled.connect(self.toggle_masks.emit)
+        self.addAction(self.mask_action)
+        
     def add_separator_with_label(self, label):
         """라벨이 있는 구분선 추가"""
         # 향후 구현 - 현재는 일반 구분선만 추가
         if self.actions():  # 첫 번째가 아닐 때만
             self.addSeparator()
             
-    def set_enabled_state(self, has_image=False, has_vectors=False):
+    def set_enabled_state(self, has_image=False, has_masks=False, model_loaded=False):
         """툴바 버튼 활성화 상태 설정"""
-        # 향후 구현
-        pass
+        # 세그멘테이션 버튼: 이미지가 있고 모델이 로드된 경우에만 활성화
+        self.segment_action.setEnabled(has_image and model_loaded)
+        
+        # DXF 저장 버튼: 마스크가 있을 때만 활성화
+        self.save_action.setEnabled(has_masks)
+        
+        # 마스크 토글: 마스크가 있을 때만 활성화
+        self.mask_action.setEnabled(has_masks)
+        
+    def set_segmentation_running(self, running: bool):
+        """세그멘테이션 실행 상태 설정"""
+        if running:
+            self.segment_action.setText("처리 중...")
+            self.segment_action.setEnabled(False)
+        else:
+            self.segment_action.setText("세그멘테이션 실행")
+            # 이미지와 모델 상태에 따라 활성화 여부 결정 (메인에서 호출)

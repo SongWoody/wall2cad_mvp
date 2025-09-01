@@ -85,12 +85,14 @@ class SAMProcessor:
         
         print("SAM 모델 로딩 완료!")
         
-    def generate_masks(self, image):
+    def generate_masks(self, image, min_area=500, max_masks=100):
         """
-        Generate masks for input image
+        Generate masks for input image with filtering and optimization
         
         Args:
             image: RGB image as numpy array
+            min_area: Minimum mask area to keep (pixels)
+            max_masks: Maximum number of masks to return
             
         Returns:
             List of mask dictionaries
@@ -103,12 +105,46 @@ class SAMProcessor:
         # Generate masks
         masks = self.mask_generator.generate(image)
         
-        print(f"Generated {len(masks)} masks")
+        print(f"Generated {len(masks)} raw masks")
         
-        # Sort by area (largest first) for better visualization
-        masks = sorted(masks, key=lambda x: x['area'], reverse=True)
+        # Filter by area
+        filtered_masks = [mask for mask in masks if mask['area'] >= min_area]
+        print(f"After area filtering (>={min_area}): {len(filtered_masks)} masks")
         
-        return masks
+        # Sort by stability score first, then by area for better quality
+        filtered_masks = sorted(
+            filtered_masks, 
+            key=lambda x: (x.get('stability_score', 0), x['area']), 
+            reverse=True
+        )
+        
+        # Limit number of masks
+        if len(filtered_masks) > max_masks:
+            filtered_masks = filtered_masks[:max_masks]
+            print(f"Limited to top {max_masks} masks")
+            
+        # Add mask quality metrics
+        for i, mask in enumerate(filtered_masks):
+            mask['rank'] = i + 1
+            mask['quality_category'] = self._categorize_mask_quality(mask)
+            
+        print(f"Final result: {len(filtered_masks)} high-quality masks")
+        
+        return filtered_masks
+        
+    def _categorize_mask_quality(self, mask):
+        """Categorize mask quality based on area and stability score"""
+        area = mask['area']
+        stability = mask.get('stability_score', 0)
+        
+        if area > 50000 and stability > 0.95:
+            return 'excellent'
+        elif area > 10000 and stability > 0.90:
+            return 'good'
+        elif area > 2000 and stability > 0.85:
+            return 'fair'
+        else:
+            return 'poor'
         
     def get_model_info(self):
         """Get model information"""

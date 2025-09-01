@@ -256,6 +256,15 @@ class PropertyPanel(QWidget):
             'fill_holes': self.fill_holes_check.isChecked()
         }
         
+    def get_sam_parameters(self):
+        """세그멘테이션용 SAM 매개변수 반환 (메인 윈도우 호환용)"""
+        return {
+            'points_per_side': self.points_per_side_spin.value(),
+            'pred_iou_thresh': self.iou_thresh_spin.value(),
+            'stability_score_thresh': self.stability_thresh_spin.value(),
+            'min_mask_region_area': self.min_area_spin.value()
+        }
+        
     def get_export_settings(self):
         """현재 내보내기 설정 반환"""
         return {
